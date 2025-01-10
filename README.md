@@ -1,3 +1,5 @@
+# This fork serves as a early update for the Spring 2025 courses.
+
 ## SUchedule
 
 This project allows Sabancı University students to create their schedule with a friendly user interface.
