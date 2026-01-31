@@ -80,7 +80,7 @@ jobs:
         if: steps.check.outputs.changes == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           commit-message: "chore: update data to v${{ steps.check.outputs.version }}"
           title: "Data Update to v${{ steps.check.outputs.version }}"
           body: |
@@ -97,6 +97,6 @@ jobs:
       - name: Enable Auto-Merge
         if: steps.cpr.outputs.pull-request-operation == 'created'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
           gh pr merge "${{ steps.cpr.outputs.pull-request-number }}" --auto --squash
