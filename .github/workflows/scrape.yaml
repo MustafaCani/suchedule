@@ -51,6 +51,21 @@ jobs:
           python scraper/scrape.py $CURRENT_TERM
           echo "::endgroup::"
 
+          # --- data validty check 🛡️ ---
+          echo "::group::Validating Data (Safety Check)"
+          # We use python to check if the new file actually contains courses.
+          # If 'courses' is empty, we exit with error code 1 to stop the workflow.
+          python -c "import json, sys; data = json.load(open('data.min.json')); sys.exit(0 if len(data.get('courses', [])) > 0 else 1)"
+          
+          if [ $? -ne 0 ]; then
+            echo "::error::CRITICAL: Scraper returned 0 courses! Aborting update to prevent data loss."
+            rm data.min.json
+            exit 1
+          fi
+          echo "Data validation passed: Courses found."
+          echo "::endgroup::"
+          # --- validity check ends ---
+
           echo "::group::Checking for changes"
           # Check if there are any changes
           if cmp -s data.min.json "data-v${CURRENT_VERSION}.min.json"; then
