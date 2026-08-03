@@ -31,10 +31,32 @@ jobs:
       - name: Calculate current term and run update
         id: check
         run: |
-          # Calculate current term
+          # Calculate current term. Terms are coded as {academicYear}{01=Fall,02=Spring}.
+          # Aug-Dec -> Fall of this calendar year. Jan-Apr -> Spring (academic year = last Aug).
+          # May-Jul is the summer window: we deliberately do NOT auto-advance the term
+          # then, so the last real Fall/Spring term stays in place until Fall begins.
           echo "::group::Calculating academic term"
-          CURRENT_TERM=$(date +%Y%m | awk '{y=int(substr($1,1,4)); m=substr($1,5,2); printf("%d%02d", m>=8?y:y-1, m<=4?2:3)}')
-          echo "Current term: $CURRENT_TERM"
+          EXISTING_TERM=$(grep -o "term: '[0-9]\+'" js/suchedule.js | grep -o '[0-9]\+')
+          YEAR=$(date +%Y)
+          MONTH=$(date +%-m)
+
+          if [ "$MONTH" -ge 8 ]; then
+            CANDIDATE_TERM="${YEAR}01"
+          elif [ "$MONTH" -le 4 ]; then
+            CANDIDATE_TERM="$((YEAR - 1))02"
+          else
+            CANDIDATE_TERM=""
+          fi
+
+          if [ -n "$CANDIDATE_TERM" ] && [ "$CANDIDATE_TERM" -gt "$EXISTING_TERM" ]; then
+            CURRENT_TERM="$CANDIDATE_TERM"
+            TERM_CHANGED=true
+            echo "New term detected: $EXISTING_TERM -> $CURRENT_TERM"
+          else
+            CURRENT_TERM="$EXISTING_TERM"
+            TERM_CHANGED=false
+            echo "No newer fall/spring term yet, keeping: $CURRENT_TERM"
+          fi
           echo "::endgroup::"
 
           # Get current version number
@@ -81,9 +103,13 @@ jobs:
             git rm -f "data-v${CURRENT_VERSION}.min.json"
 
             echo "Updating JavaScript files"
-            # Update version and term in JavaScript files
+            # Update version in JavaScript files
             sed -i "s/dataVersion:\([[:space:]]*\)[0-9]\+/dataVersion:\1${NEXT_VERSION}/g" js/suchedule*.js
-            sed -i "s/term:\([[:space:]]*\)\(.\)[0-9]\+\(.\)/term:\1\2${CURRENT_TERM}\3/g" js/suchedule*.js
+
+            if [ "$TERM_CHANGED" = true ]; then
+              echo "Updating term to $CURRENT_TERM in JavaScript files"
+              sed -i "s/term:\([[:space:]]*\)\(.\)[0-9]\+\(.\)/term:\1\2${CURRENT_TERM}\3/g" js/suchedule*.js
+            fi
 
             echo "changes=true" >> $GITHUB_OUTPUT
             echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
