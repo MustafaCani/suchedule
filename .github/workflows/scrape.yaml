@@ -32,30 +32,30 @@ jobs:
         id: check
         run: |
           # Calculate current term. Terms are coded as {academicYear}{01=Fall,02=Spring}.
-          # Aug-Dec -> Fall of this calendar year. Jan-Apr -> Spring (academic year = last Aug).
-          # May-Jul is the summer window: we deliberately do NOT auto-advance the term
-          # then, so the last real Fall/Spring term stays in place until Fall begins.
+          # Rather than guessing from the calendar, we directly ask bannerweb whether
+          # the next Fall/Spring term has been added yet (01 -> 02 same year,
+          # 02 -> 01 next year) and switch to it the day it appears. Summer is never
+          # a candidate, so it's automatically skipped.
           echo "::group::Calculating academic term"
           EXISTING_TERM=$(grep -o "term: '[0-9]\+'" js/suchedule.js | grep -o '[0-9]\+')
-          YEAR=$(date +%Y)
-          MONTH=$(date +%-m)
+          EXISTING_YEAR=${EXISTING_TERM:0:4}
+          EXISTING_CODE=${EXISTING_TERM:4:2}
 
-          if [ "$MONTH" -ge 8 ]; then
-            CANDIDATE_TERM="${YEAR}01"
-          elif [ "$MONTH" -le 4 ]; then
-            CANDIDATE_TERM="$((YEAR - 1))02"
+          if [ "$EXISTING_CODE" = "01" ]; then
+            NEXT_TERM="${EXISTING_YEAR}02"
           else
-            CANDIDATE_TERM=""
+            NEXT_TERM="$((EXISTING_YEAR + 1))01"
           fi
 
-          if [ -n "$CANDIDATE_TERM" ] && [ "$CANDIDATE_TERM" -gt "$EXISTING_TERM" ]; then
-            CURRENT_TERM="$CANDIDATE_TERM"
+          echo "Checking whether term $NEXT_TERM has been added to bannerweb yet..."
+          if python scraper/scrape.py --check-term "$NEXT_TERM"; then
+            echo "New term detected: $EXISTING_TERM -> $NEXT_TERM"
+            CURRENT_TERM="$NEXT_TERM"
             TERM_CHANGED=true
-            echo "New term detected: $EXISTING_TERM -> $CURRENT_TERM"
           else
+            echo "$NEXT_TERM not available yet, keeping: $EXISTING_TERM"
             CURRENT_TERM="$EXISTING_TERM"
             TERM_CHANGED=false
-            echo "No newer fall/spring term yet, keeping: $CURRENT_TERM"
           fi
           echo "::endgroup::"
 

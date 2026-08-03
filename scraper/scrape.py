@@ -24,6 +24,15 @@ class SUcheduleCourseScraper:
         self.write_json_file(courses=course_datas,places=self.places,instructors=self.instructors)
         print("Json file is created.")
 
+    def has_courses(self) -> bool:
+        """
+        Check whether this term has been added to bannerweb yet, i.e. it
+        has at least one scheduled course.
+        """
+        course_codes = self.get_course_codes()
+        course_datas = self.get_courses_data(codes=course_codes)
+        return len(course_datas) > 0
+
     def get_course_codes(self) -> List[str]:
         """
         Get courses code from bannerweb.
@@ -336,6 +345,10 @@ class SUcheduleCourseScraper:
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 2 and sys.argv[1] == '--check-term':
+        term = int(sys.argv[2])
+        sys.exit(0 if SUcheduleCourseScraper(term=term).has_courses() else 1)
+
     term = int(sys.argv[1])
     scraper = SUcheduleCourseScraper(term=term)
     scraper.run()
