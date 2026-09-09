@@ -535,7 +535,8 @@ tr > td:first-child, th:first-child {
     margin-top: 15px;
 }
 
-#notify-copy-fail p {
+#notify-copy-fail p,
+#notify-courses-updated p {
     white-space: pre-line;
 }
 

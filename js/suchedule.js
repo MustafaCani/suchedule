@@ -117,6 +117,108 @@ const saveSchedule = () => {
     localStorage.setItem('saved-schedule', cellCourses.getAllCrnDataToSave().join(','));
 };
 
+const scheduleStorage = (() => {
+    const getCrns = () => (localStorage.getItem('saved-schedule') || '').split(',').filter(crn => crn !== '');
+
+    const clear = () => localStorage.removeItem('saved-schedule');
+
+    const restore = () => {
+        // On a data update the course entries are rendered from an async request,
+        // so there is nothing to restore onto until #course-list is populated.
+        if ($('#course-list').hasClass('loading')) {
+            return;
+        }
+
+        getCrns().forEach(crn => {
+            $(`.course-section[data-crn="${crn}"]`).click();
+        });
+
+        // Sections that no longer exist were silently skipped above. Persisting the
+        // pruned set keeps them from being reported again on the next data update.
+        saveSchedule();
+    };
+
+    return {getCrns, clear, restore};
+})();
+
+const courseDataDiff = (() => {
+    const indexSections = ({courses, instructors, places}) => {
+        const sections = {};
+
+        courses.forEach(course => course.classes.forEach(_class => _class.sections.forEach(section => {
+            sections[section.crn] = {
+                name: `${course.code}${_class.type} - ${section.group}`,
+                // Instructors and places are indices into arrays that are rebuilt by
+                // every scrape, so they are resolved to text before being compared.
+                instructor: instructors[section.instructors],
+                hours: section.schedule
+                    .map(({day, start, duration}) => `${day}|${start}|${duration}`).sort().join(),
+                places: section.schedule.map(({place}) => places[place]).sort().join()
+            };
+        })));
+
+        return sections;
+    };
+
+    const describeChanges = (before, after) => {
+        const changes = [];
+
+        if (before.hours !== after.hours) {
+            changes.push('is rescheduled');
+        }
+
+        if (before.places !== after.places) {
+            changes.push('is moved to another classroom');
+        }
+
+        if (before.instructor !== after.instructor) {
+            changes.push('has a new instructor');
+        }
+
+        return changes;
+    };
+
+    // Compares the sections of the saved schedule between two versions of the course
+    // data and returns one sentence per affected section.
+    const forSavedSchedule = (crns, oldData, newData) => {
+        const before = oldData === null ? null : indexSections(oldData);
+        const after = indexSections(newData);
+
+        return crns.map(crn => {
+            if (!after.hasOwnProperty(crn)) {
+                const name = before !== null && before.hasOwnProperty(crn) ? before[crn].name : `CRN ${crn}`;
+
+                return `${name} is deleted`;
+            }
+
+            if (before === null || !before.hasOwnProperty(crn)) {
+                return null;
+            }
+
+            const changes = describeChanges(before[crn], after[crn]);
+
+            return changes.length === 0 ? null : `${after[crn].name} ${changes.join(' and ')}`;
+        }).filter(change => change !== null);
+    };
+
+    return {forSavedSchedule};
+})();
+
+const showCourseDataUpdatedNotification = changes => {
+    const message = changes.length === 0
+        ? `Courses have been updated. This did not affect your existing schedule. `
+          + `However, you might want to check what is new.`
+        : `Courses have been updated. The following changes are made in your schedule:\n\n`
+          + `${changes.map(change => `- ${change}`).join('\n')}\n\n`
+          + `You may adjust your plans accordingly.`;
+
+    const notification = $('#notify-courses-updated');
+
+    notification.find('.notification-content p').text(message);
+
+    notification.fadeIn(500);
+};
+
 const courseEntry = (() => {
     const courseEntry = function (codeOr$element) {
         if (!(codeOr$element instanceof $)) {
@@ -666,29 +768,39 @@ const classCells = (() => {
     const storageKey = `course-data-${config.term}-${config.dataVersion}`;
     const data = localStorage.getItem(storageKey);
 
-    const showNotification = () => {
-        $('#notify-data-updated').fadeIn(500);
-    };
+    // Course data cached by earlier visits. Its key carries the term and the version
+    // it was fetched for, which is the only record of what the user saw last time.
+    const findCachedData = () => {
+        const cachedData = [];
 
-    const clearOldData = () => {
-        let removedData = false;
-
-        for (let i = 0; ; i++) {
+        for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
 
-            if (key === null) {
-                break;
+            if (key === storageKey || key.indexOf('course-data') === -1) {
+                continue;
             }
 
-            if (key.indexOf('course-data') > -1 || key.indexOf('saved-schedule') > -1) {
-                localStorage.removeItem(key);
+            const keyParts = /^course-data-(\d+)-(\d+)$/.exec(key);
 
-                removedData = true;
-            }
+            cachedData.push({
+                key: key,
+                term: keyParts === null ? null : keyParts[1],
+                version: keyParts === null ? -1 : Number(keyParts[2])
+            });
         }
 
-        if (removedData) {
-            showNotification();
+        return cachedData;
+    };
+
+    const readCachedData = key => {
+        try {
+            const cached = JSON.parse(localStorage.getItem(key));
+
+            // Releases before the data version scheme cached no places, which makes
+            // their data impossible to compare against.
+            return cached !== null && Array.isArray(cached.places) ? cached : null;
+        } catch (error) {
+            return null;
         }
     };
 
@@ -703,11 +815,38 @@ const classCells = (() => {
     $.getJSON(`data-v${config.dataVersion}.min.json`, data => {
         const {courses, instructors, places} = data;
 
-        clearOldData();
+        const cachedData = findCachedData();
+        const termChanged = cachedData.some(cached => cached.term !== config.term);
+        const previous = cachedData.filter(cached => cached.term === config.term)
+            .sort((a, b) => b.version - a.version).shift();
+
+        const crns = scheduleStorage.getCrns();
+        const previousData = previous === undefined ? null : readCachedData(previous.key);
+
+        cachedData.forEach(cached => localStorage.removeItem(cached.key));
 
         courseEntry.populate(courses, instructors, places);
 
         localStorage.setItem(storageKey, JSON.stringify(data));
+
+        // A new term makes the saved CRNs meaningless, so the schedule still goes.
+        if (termChanged) {
+            scheduleStorage.clear();
+
+            $('#notify-data-updated').fadeIn(500);
+
+            return;
+        }
+
+        const changes = courseDataDiff.forSavedSchedule(crns, previousData, data);
+
+        // Everything the saved schedule still points at is kept as it is; sections
+        // that moved follow the new data, and deleted ones simply drop out.
+        scheduleStorage.restore();
+
+        if (cachedData.length > 0 || changes.length > 0) {
+            showCourseDataUpdatedNotification(changes);
+        }
     });
 })();
 
@@ -825,15 +964,9 @@ const classCells = (() => {
 })();
 
 (loadScheduleFromLocalStorage = () => {
-    const savedSchedule = localStorage.getItem('saved-schedule');
-
-    if (savedSchedule === null) {
-        return;
-    }
-
-    savedSchedule.split(',').forEach(crn => {
-        $(`.course-section[data-crn="${crn}"]`).click();
-    });
+    // A no-op when the course data is still being fetched; in that case
+    // updateCourseData restores the schedule once the course list is populated.
+    scheduleStorage.restore();
 })();
 
 (setNotificationEvents = () => {
