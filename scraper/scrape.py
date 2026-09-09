@@ -97,6 +97,9 @@ class SUcheduleCourseScraper:
         Get course information from a course tag.
         """
         # Catch course name, crn code, course code and section code
+        # The title has the form "<name> - <crn> - <code> - <group>", so only the
+        # last three fields are separated; the rest belongs to the name and may
+        # itself contain dashes (e.g. "Secure and Energy-Constrained Systems").
         title = course.find("a").text.split("-")
 
         # Catch course sections
@@ -109,7 +112,7 @@ class SUcheduleCourseScraper:
 
         # Add values to dictionary
         course_information = {
-            "name": title[0],
+            "name": "-".join(title[:-3]),
             "crn": title[-3],
             "code": title[-2],
             "section": [
