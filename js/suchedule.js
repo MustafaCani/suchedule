@@ -1,10 +1,53 @@
-const config = {
-    term: '202602',
-    dataVersion: 111
-};
+// The terms on offer come from js/terms.js, which the scraper workflow regenerates
+// whenever bannerweb adds a term or the courses of one change.
+const terms = (() => {
+    const seasons = {'01': 'Fall', '02': 'Spring', '03': 'Summer'};
+    const selectionKey = 'selected-term';
 
-config.infoLink = `https://suis.sabanciuniv.edu/prod/bwckschd.p_disp_detail_sched?term_in=${config.term}&crn_in=`;
-Object.freeze(config);
+    // Oldest first, as listed in js/terms.js.
+    const codes = termConfig.map(entry => entry.term);
+
+    let current = null;
+
+    const all = () => codes.slice(0);
+
+    const latest = () => codes[codes.length - 1];
+
+    const includes = term => codes.indexOf(term) > -1;
+
+    const dataVersion = term => termConfig.find(entry => entry.term === term).dataVersion;
+
+    const dataFile = term => `data-${term}-v${dataVersion(term)}.min.json`;
+
+    const infoLink = term => `https://suis.sabanciuniv.edu/prod/bwckschd.p_disp_detail_sched?term_in=${term}&crn_in=`;
+
+    // Term codes are {first year of the academic year}{01 Fall, 02 Spring, 03 Summer},
+    // so '202601' is the Fall term of the 2026-27 academic year.
+    const getSeason = term => seasons[term.slice(4)];
+
+    const getName = term => {
+        const year = Number(term.slice(0, 4));
+
+        return `${year}-${String(year + 1).slice(2)} ${getSeason(term)}`;
+    };
+
+    const getCurrent = () => current;
+
+    const select = term => {
+        current = term;
+
+        localStorage.setItem(selectionKey, term);
+    };
+
+    // The term picked last time, or null when there is none or it is no longer offered.
+    const getSavedSelection = () => {
+        const saved = localStorage.getItem(selectionKey);
+
+        return includes(saved) ? saved : null;
+    };
+
+    return {all, latest, includes, dataVersion, dataFile, infoLink, getSeason, getName, getCurrent, select, getSavedSelection};
+})();
 
 const templateGenerator = (() => {
     const getDayFromCode = (() => {
@@ -26,7 +69,7 @@ const templateGenerator = (() => {
         return `${start < 10 ? '0' : ''}${start}:40-${end < 10 ? '0' : ''}${end}:30`;
     };
 
-    const makeCourseEntry = (course, instructors, places) => `
+    const makeCourseEntry = (course, instructors, places, term) => `
         <div class="course-entry hide-info" data-code="${course.code}">
             <div class="course-header">
                 <div class="course-name">${course.code} - ${course.name}</div>
@@ -43,7 +86,7 @@ const templateGenerator = (() => {
                     <div class="section-info">
                         <div class="section-header">
                             <div class="section-group" data-group="${section.group}">${section.group}</div>
-                            <a href="${config.infoLink}${section.crn}" class="section-link" target="_blank">info</a>
+                            <a href="${terms.infoLink(term)}${section.crn}" class="section-link" target="_blank">info</a>
                         </div>
                         <div class="instructor">${instructors[section.instructors]}</div>
                         <div class="section-days">
@@ -113,18 +156,34 @@ const colorPalette = (() => {
     };
 })();
 
-const saveSchedule = () => {
-    localStorage.setItem('saved-schedule', cellCourses.getAllCrnDataToSave().join(','));
+const storageKeys = () => {
+    const keys = [];
+
+    for (let i = 0; i < localStorage.length; i++) {
+        keys.push(localStorage.key(i));
+    }
+
+    return keys;
 };
 
-const scheduleStorage = (() => {
-    const getCrns = () => (localStorage.getItem('saved-schedule') || '').split(',').filter(crn => crn !== '');
+const saveSchedule = () => scheduleStorage.save();
 
-    const clear = () => localStorage.removeItem('saved-schedule');
+// Every term has its own schedule, saved as the list of its CRNs.
+const scheduleStorage = (() => {
+    const keyOf = term => `saved-schedule-${term}`;
+
+    const getCrns = (term = terms.getCurrent()) =>
+        (localStorage.getItem(keyOf(term)) || '').split(',').filter(crn => crn !== '');
+
+    const save = () => {
+        localStorage.setItem(keyOf(terms.getCurrent()), cellCourses.getAllCrnDataToSave().join(','));
+    };
+
+    const set = (term, crns) => localStorage.setItem(keyOf(term), crns.join(','));
 
     const restore = () => {
-        // On a data update the course entries are rendered from an async request,
-        // so there is nothing to restore onto until #course-list is populated.
+        // The course entries are rendered from an async request when the data is not
+        // cached, so there is nothing to restore onto until #course-list is populated.
         if ($('#course-list').hasClass('loading')) {
             return;
         }
@@ -135,10 +194,21 @@ const scheduleStorage = (() => {
 
         // Sections that no longer exist were silently skipped above. Persisting the
         // pruned set keeps them from being reported again on the next data update.
-        saveSchedule();
+        save();
     };
 
-    return {getCrns, clear, restore};
+    // Drops the schedules of terms that are no longer offered.
+    const dropStale = () => {
+        storageKeys().forEach(key => {
+            const keyParts = /^saved-schedule-(\d+)$/.exec(key);
+
+            if (keyParts !== null && !terms.includes(keyParts[1])) {
+                localStorage.removeItem(key);
+            }
+        });
+    };
+
+    return {getCrns, save, set, restore, dropStale};
 })();
 
 const courseDataDiff = (() => {
@@ -442,11 +512,11 @@ const courseEntry = (() => {
 
     courseEntry.make = (course, instructors) => courseEntry(templateGenerator.makeCourseEntry(course, instructors));
 
-    courseEntry.populate = (courses, instructors, places) => {
+    courseEntry.populate = (courses, instructors, places, term) => {
         const $list = $('#course-list').removeClass('loading');
 
         courses.forEach(course => {
-            $list.append(templateGenerator.makeCourseEntry(course, instructors, places));
+            $list.append(templateGenerator.makeCourseEntry(course, instructors, places, term));
         });
     };
 
@@ -764,35 +834,22 @@ const classCells = (() => {
     }
 })();
 
-(updateCourseData = () => {
-    const storageKey = `course-data-${config.term}-${config.dataVersion}`;
-    const data = localStorage.getItem(storageKey);
+// The course data of every term is cached under course-data-{term}-{version}. The
+// key of an older version is the only record of what the user saw last time.
+const courseData = (() => {
+    const keyOf = term => `course-data-${term}-${terms.dataVersion(term)}`;
 
-    // Course data cached by earlier visits. Its key carries the term and the version
-    // it was fetched for, which is the only record of what the user saw last time.
-    const findCachedData = () => {
-        const cachedData = [];
+    const findCached = () => storageKeys().filter(key => key.indexOf('course-data') === 0).map(key => {
+        const keyParts = /^course-data-(\d+)-(\d+)$/.exec(key);
 
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        return {
+            key: key,
+            term: keyParts === null ? null : keyParts[1],
+            version: keyParts === null ? -1 : Number(keyParts[2])
+        };
+    });
 
-            if (key === storageKey || key.indexOf('course-data') === -1) {
-                continue;
-            }
-
-            const keyParts = /^course-data-(\d+)-(\d+)$/.exec(key);
-
-            cachedData.push({
-                key: key,
-                term: keyParts === null ? null : keyParts[1],
-                version: keyParts === null ? -1 : Number(keyParts[2])
-            });
-        }
-
-        return cachedData;
-    };
-
-    const readCachedData = key => {
+    const read = key => {
         try {
             const cached = JSON.parse(localStorage.getItem(key));
 
@@ -804,50 +861,223 @@ const classCells = (() => {
         }
     };
 
-    if (data !== null) {
-        const {courses, instructors, places} = JSON.parse(data);
+    // The terms that earlier visits cached data for, whether still offered or not.
+    const getCachedTerms = () => findCached().map(entry => entry.term).filter(term => term !== null);
 
-        courseEntry.populate(courses, instructors, places);
+    // Drops the data of terms that are no longer offered.
+    const dropStale = () => {
+        findCached().filter(entry => !terms.includes(entry.term)).forEach(entry => localStorage.removeItem(entry.key));
+    };
 
-        return;
-    }
+    // Hands the data of the term to onLoaded straight from the cache when the current
+    // version is there. Otherwise it is fetched and cached first, and onLoaded also
+    // receives whether an older version was cached, along with that version's data.
+    const load = (term, onLoaded, onFailed) => {
+        const key = keyOf(term);
+        const cached = read(key);
 
-    $.getJSON(`data-v${config.dataVersion}.min.json`, data => {
-        const {courses, instructors, places} = data;
-
-        const cachedData = findCachedData();
-        const termChanged = cachedData.some(cached => cached.term !== config.term);
-        const previous = cachedData.filter(cached => cached.term === config.term)
-            .sort((a, b) => b.version - a.version).shift();
-
-        const crns = scheduleStorage.getCrns();
-        const previousData = previous === undefined ? null : readCachedData(previous.key);
-
-        cachedData.forEach(cached => localStorage.removeItem(cached.key));
-
-        courseEntry.populate(courses, instructors, places);
-
-        localStorage.setItem(storageKey, JSON.stringify(data));
-
-        // A new term makes the saved CRNs meaningless, so the schedule still goes.
-        if (termChanged) {
-            scheduleStorage.clear();
-
-            $('#notify-data-updated').fadeIn(500);
+        if (cached !== null) {
+            onLoaded(cached, null);
 
             return;
         }
 
-        const changes = courseDataDiff.forSavedSchedule(crns, previousData, data);
+        $.getJSON(terms.dataFile(term)).done(data => {
+            const previous = findCached().filter(entry => entry.term === term && entry.key !== key)
+                .sort((a, b) => b.version - a.version);
+            const previousData = previous.length === 0 ? null : read(previous[0].key);
 
-        // Everything the saved schedule still points at is kept as it is; sections
-        // that moved follow the new data, and deleted ones simply drop out.
-        scheduleStorage.restore();
+            previous.forEach(entry => localStorage.removeItem(entry.key));
 
-        if (cachedData.length > 0 || changes.length > 0) {
-            showCourseDataUpdatedNotification(changes);
+            try {
+                localStorage.setItem(key, JSON.stringify(data));
+            } catch (error) {
+                // No room left to cache it; the data is simply fetched again next time.
+            }
+
+            onLoaded(data, {hadPrevious: previous.length > 0, previousData: previousData});
+        }).fail(onFailed);
+    };
+
+    return {getCachedTerms, dropStale, load};
+})();
+
+const legacyStorage = (() => {
+    // Until September 2026 the site showed a single term: its schedule was saved under
+    // 'saved-schedule' and its course data cached under course-data-{term}-{version}.
+    // Moves that schedule under its term and returns the term the user was on, or null
+    // when it is no longer offered.
+    const migrate = () => {
+        const cachedTerms = courseData.getCachedTerms();
+        const crns = localStorage.getItem('saved-schedule');
+
+        // Without any cached data there is no record of the term, but it can only have
+        // been the newest one.
+        const lastTerm = cachedTerms.length === 0
+            ? terms.latest()
+            : cachedTerms.find(term => terms.includes(term)) || null;
+
+        if (crns === null) {
+            return lastTerm;
         }
-    });
+
+        localStorage.removeItem('saved-schedule');
+
+        const savedCrns = crns.split(',').filter(crn => crn !== '');
+
+        if (lastTerm !== null) {
+            scheduleStorage.set(lastTerm, savedCrns);
+        } else if (savedCrns.length > 0) {
+            // A schedule of a term that is no longer offered is of no use.
+            $('#notify-data-updated').fadeIn(500);
+        }
+
+        return lastTerm;
+    };
+
+    return {migrate};
+})();
+
+const showLoadFailedNotification = term => {
+    const notification = $('#notify-load-failed');
+
+    notification.find('.notification-content p').text(
+        `The courses of ${terms.getName(term)} could not be loaded. `
+        + `Please check your connection and refresh the page.`
+    );
+
+    notification.fadeIn(500);
+};
+
+// The Select Term button in the header and its dropdown.
+const termSelector = (() => {
+    const introKey = 'term-select-intro-dismissed';
+
+    const isOpen = () => $('#term-select').hasClass('open');
+
+    const close = () => $('#term-select').removeClass('open');
+
+    const open = () => {
+        $('#term-select').addClass('open');
+
+        dismissIntro();
+    };
+
+    const toggle = () => isOpen() ? close() : open();
+
+    const build = () => {
+        const $menu = $('#term-menu');
+
+        terms.all().forEach(term => {
+            $menu.append(`<div class="term-option" data-term="${term}">${terms.getName(term)}</div>`);
+        });
+    };
+
+    // Reflects the current term on the button and in the dropdown.
+    const render = () => {
+        const current = terms.getCurrent();
+
+        $('#term-label').attr('data-full', terms.getName(current)).attr('data-short', terms.getSeason(current));
+        $('#term-button').attr('title', `Select Term (${terms.getName(current)})`);
+        $('.term-option').removeClass('selected').filter(`[data-term="${current}"]`).addClass('selected');
+    };
+
+    // A one-time notice pointing at the button. It stays until the user either
+    // dismisses it or opens the dropdown, and is not shown again after that.
+    const showIntro = () => {
+        if (localStorage.getItem(introKey) !== null) {
+            return;
+        }
+
+        $('#notify-term-select').show();
+        $('#term-button').addClass('attention');
+    };
+
+    const dismissIntro = () => {
+        if (!$('#term-button').hasClass('attention')) {
+            return;
+        }
+
+        localStorage.setItem(introKey, 'yes');
+
+        $('#term-button').removeClass('attention');
+        $('#notify-term-select').fadeOut(500);
+    };
+
+    return {isOpen, open, close, toggle, build, render, showIntro, dismissIntro};
+})();
+
+// Puts a term on the screen: its course list in the menu and its saved schedule on
+// the table.
+const termView = (() => {
+    let loadCount = 0;
+
+    // Empties the schedule table, leaving the storage as it is.
+    const clearSchedule = () => {
+        $('.course-section.selected').removeClass('selected');
+        $('.class-cell').attr('class', 'class-cell').children().remove();
+
+        colorPalette.reset();
+    };
+
+    // The filters are kept in the inputs, so a freshly built list has to be run
+    // through them again.
+    const applyFilters = () => {
+        if (($('#search-box').val() || '') !== '') {
+            $('#search-box').trigger('input');
+        }
+
+        if ($('#day-filter-selections input:not(:checked)').length > 0) {
+            sectionEntry.filterByDays();
+        }
+    };
+
+    const show = term => {
+        const loadId = ++loadCount;
+
+        terms.select(term);
+        termSelector.render();
+
+        courseEntry.endDisplayMode();
+        clearSchedule();
+
+        $('#course-list').empty().addClass('loading');
+
+        courseData.load(term, (data, update) => {
+            // The user has moved on to another term while this one was being fetched.
+            if (loadId !== loadCount) {
+                return;
+            }
+
+            const {courses, instructors, places} = data;
+            const crns = scheduleStorage.getCrns(term);
+
+            courseEntry.populate(courses, instructors, places, term);
+            applyFilters();
+
+            // Everything the saved schedule still points at is kept as it is; sections
+            // that moved follow the new data, and deleted ones simply drop out.
+            scheduleStorage.restore();
+
+            if (update === null) {
+                return;
+            }
+
+            const changes = courseDataDiff.forSavedSchedule(crns, update.previousData, data);
+
+            if (update.hadPrevious || changes.length > 0) {
+                showCourseDataUpdatedNotification(changes);
+            }
+        }, () => {
+            if (loadId === loadCount) {
+                $('#course-list').removeClass('loading');
+
+                showLoadFailedNotification(term);
+            }
+        });
+    };
+
+    return {show, clearSchedule};
 })();
 
 (setEvents = () => {
@@ -936,7 +1166,9 @@ const classCells = (() => {
 
         return event => {
             if (event.keyCode === ESC_KEY) {
-                if (courseEntry.isOnDisplayMode()) {
+                if (termSelector.isOpen()) {
+                    termSelector.close();
+                } else if (courseEntry.isOnDisplayMode()) {
                     courseEntry.endDisplayMode();
                 } else {
                     $('#search-box').val('').trigger('input');
@@ -945,7 +1177,12 @@ const classCells = (() => {
         };
     })());
 
-    $(document).on('click', '#clear-button', () => $('#notify-clear').fadeIn(500));
+    $(document).on('click', '#clear-button', () => {
+        $('#notify-clear .notification-content p')
+            .text(`Are you sure you want to clear your ${terms.getName(terms.getCurrent())} schedule?`);
+
+        $('#notify-clear').fadeIn(500);
+    });
 
     $(document).on('click', '#about-button', () => $('#notify-about').fadeIn(500));
     $(document).on('click', '#about-button', () => $('#notify-cookies').fadeIn(500));
@@ -963,10 +1200,40 @@ const classCells = (() => {
     }
 })();
 
-(loadScheduleFromLocalStorage = () => {
-    // A no-op when the course data is still being fetched; in that case
-    // updateCourseData restores the schedule once the course list is populated.
-    scheduleStorage.restore();
+(setTermSelectorEvents = () => {
+    $(document).on('click', '#term-button', () => termSelector.toggle());
+
+    $(document).on('click', '.term-option', event => {
+        const term = $(event.currentTarget).attr('data-term');
+
+        termSelector.close();
+
+        if (term !== terms.getCurrent()) {
+            termView.show(term);
+        }
+    });
+
+    $(document).on('click', event => {
+        if (termSelector.isOpen() && $(event.target).closest('#term-select').length === 0) {
+            termSelector.close();
+        }
+    });
+
+    $(document).on('click', '#notify-term-select .button', () => termSelector.dismissIntro());
+})();
+
+(initializeTerms = () => {
+    const lastTerm = legacyStorage.migrate();
+
+    courseData.dropStale();
+    scheduleStorage.dropStale();
+
+    termSelector.build();
+    termSelector.showIntro();
+
+    // The events above must be in place before the first term is shown: restoring a
+    // schedule from a cached term happens synchronously and goes through them.
+    termView.show(terms.getSavedSelection() || lastTerm || terms.latest());
 })();
 
 (setNotificationEvents = () => {
@@ -975,10 +1242,7 @@ const classCells = (() => {
     });
 
     $(document).on('click', '#notify-clear .notification-button', () => {
-        $('.course-section.selected').removeClass('selected');
-        $('.class-cell').attr('class', 'class-cell').children().remove();
-
-        colorPalette.reset();
+        termView.clearSchedule();
 
         saveSchedule();
     });

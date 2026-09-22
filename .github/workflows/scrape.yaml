@@ -28,93 +28,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
 
-      - name: Calculate current term and run update
+      # Reads the supported terms from js/terms.js, moves the window forward when
+      # bannerweb has added a newer term, scrapes every term in it and stores the
+      # data of the ones that changed under the next version number. Rewrites
+      # js/terms.js and sets the changes/version/summary outputs when anything changed.
+      - name: Update the course data of the supported terms
         id: check
-        run: |
-          # Calculate current term. Terms are coded as {academicYear}{01=Fall,02=Spring}.
-          # Rather than guessing from the calendar, we directly ask bannerweb whether
-          # the next Fall/Spring term has been added yet (01 -> 02 same year,
-          # 02 -> 01 next year) and switch to it the day it appears. Summer is never
-          # a candidate, so it's automatically skipped.
-          echo "::group::Calculating academic term"
-          EXISTING_TERM=$(grep -o "term: '[0-9]\+'" js/suchedule.js | grep -o '[0-9]\+')
-          EXISTING_YEAR=${EXISTING_TERM:0:4}
-          EXISTING_CODE=${EXISTING_TERM:4:2}
-
-          if [ "$EXISTING_CODE" = "01" ]; then
-            NEXT_TERM="${EXISTING_YEAR}02"
-          else
-            NEXT_TERM="$((EXISTING_YEAR + 1))01"
-          fi
-
-          echo "Checking whether term $NEXT_TERM has been added to bannerweb yet..."
-          if python scraper/scrape.py --check-term "$NEXT_TERM"; then
-            echo "New term detected: $EXISTING_TERM -> $NEXT_TERM"
-            CURRENT_TERM="$NEXT_TERM"
-            TERM_CHANGED=true
-          else
-            echo "$NEXT_TERM not available yet, keeping: $EXISTING_TERM"
-            CURRENT_TERM="$EXISTING_TERM"
-            TERM_CHANGED=false
-          fi
-          echo "::endgroup::"
-
-          # Get current version number
-          echo "::group::Getting current version"
-          CURRENT_VERSION=$(ls data-v*.min.json | grep -o '[0-9]\+')
-          NEXT_VERSION=$((CURRENT_VERSION + 1))
-          echo "Current version: $CURRENT_VERSION"
-          echo "Next version will be: $NEXT_VERSION"
-          echo "::endgroup::"
-
-          echo "::group::Running scraper"
-          echo "Running scraper/scrape.py with term $CURRENT_TERM"
-          # Run scraping script with term argument
-          python scraper/scrape.py $CURRENT_TERM
-          echo "::endgroup::"
-
-          # --- data validty check 🛡️ ---
-          echo "::group::Validating Data (Safety Check)"
-          # We use python to check if the new file actually contains courses.
-          # If 'courses' is empty, we exit with error code 1 to stop the workflow.
-          python -c "import json, sys; data = json.load(open('data.min.json')); sys.exit(0 if len(data.get('courses', [])) > 0 else 1)"
-          
-          if [ $? -ne 0 ]; then
-            echo "::error::CRITICAL: Scraper returned 0 courses! Aborting update to prevent data loss."
-            rm data.min.json
-            exit 1
-          fi
-          echo "Data validation passed: Courses found."
-          echo "::endgroup::"
-          # --- validity check ends ---
-
-          echo "::group::Checking for changes"
-          # Check if there are any changes
-          if cmp -s data.min.json "data-v${CURRENT_VERSION}.min.json"; then
-            echo "No changes detected in scraped data"
-            rm data.min.json
-            echo "Removed temporary data.min.json"
-            echo "changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "Changes detected in scraped data"
-            echo "Moving data.min.json to data-v${NEXT_VERSION}.min.json"
-            mv data.min.json "data-v${NEXT_VERSION}.min.json"
-            echo "Removing old data-v${CURRENT_VERSION}.min.json"
-            git rm -f "data-v${CURRENT_VERSION}.min.json"
-
-            echo "Updating JavaScript files"
-            # Update version in JavaScript files
-            sed -i "s/dataVersion:\([[:space:]]*\)[0-9]\+/dataVersion:\1${NEXT_VERSION}/g" js/suchedule*.js
-
-            if [ "$TERM_CHANGED" = true ]; then
-              echo "Updating term to $CURRENT_TERM in JavaScript files"
-              sed -i "s/term:\([[:space:]]*\)\(.\)[0-9]\+\(.\)/term:\1\2${CURRENT_TERM}\3/g" js/suchedule*.js
-            fi
-
-            echo "changes=true" >> $GITHUB_OUTPUT
-            echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-          fi
-          echo "::endgroup::"
+        run: python scraper/update.py
 
       - name: Create Pull Request
         id: cpr
@@ -127,7 +47,7 @@ jobs:
           body: |
             Automated data update
 
-            - Updated data file to version ${{ steps.check.outputs.version }}
+            - ${{ steps.check.outputs.summary }}
             - Last updated: ${{ github.event.repository.updated_at }}
 
             This PR was automatically generated by GitHub Actions.

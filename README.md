@@ -10,6 +10,14 @@ This project was built with the hopes of making the course registration period e
 
 This project was built using EcmaScript 2016 (ES6) and jQuery (3.3.1).
 
+## Course Data
+
+SUchedule offers the last three terms on bannerweb, each with its own schedule. The terms and their data
+versions are listed in `js/terms.js`, and the courses of a term are in `data-<term>-v<version>.min.json`.
+Every day `.github/workflows/scrape.yaml` runs `scraper/update.py`, which moves the window forward when
+bannerweb adds a new term, re-scrapes the supported terms and stores the ones that changed under the next
+version number.
+
 ## External Libraries
 
 [jQuery](https://github.com/jquery/jquery)

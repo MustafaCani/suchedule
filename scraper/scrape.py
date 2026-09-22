@@ -13,25 +13,33 @@ class SUcheduleCourseScraper:
         self.instructors = []
         self.places = []
 
-    def run(self) -> None:
+    def run(self, output: str = "data.min.json") -> None:
         """
         Run required flow for getting course schedule and saving to a .json file
         """
+        data = self.scrape()
+        self.write_json_file(data, output)
+        print("Json file is created.")
+
+    def scrape(self) -> Dict:
+        """
+        Get the course schedule of the term from bannerweb, in the shape of the
+        .json file: {"courses": [...], "instructors": [...], "places": [...]}.
+        """
+        self.instructors = []
+        self.places = []
         course_codes = self.get_course_codes()
         print("Course codes are fetched.")
         course_datas = self.get_courses_data(codes=course_codes)
         print("Course data is fetched.")
-        self.write_json_file(courses=course_datas,places=self.places,instructors=self.instructors)
-        print("Json file is created.")
+        return {"courses": course_datas, "instructors": self.instructors, "places": self.places}
 
     def has_courses(self) -> bool:
         """
         Check whether this term has been added to bannerweb yet, i.e. it
         has at least one scheduled course.
         """
-        course_codes = self.get_course_codes()
-        course_datas = self.get_courses_data(codes=course_codes)
-        return len(course_datas) > 0
+        return len(self.scrape()["courses"]) > 0
 
     def get_course_codes(self) -> List[str]:
         """
@@ -336,22 +344,29 @@ class SUcheduleCourseScraper:
         return self.places.index(place)
 
     @staticmethod
-    def write_json_file(courses: List[Dict], instructors: List[str], places: List[str]):
+    def write_json_file(data: Dict, output: str = "data.min.json"):
         """
         Write json file.
         """
-        data = {"courses": courses,
-                "instructors": instructors,
-                "places": places}
-        with open("data.min.json", "w", encoding='utf-8') as file:
-            json.dump(data, file, ensure_ascii=False)
+        with open(output, "w", encoding='utf-8') as file:
+            file.write(serialize(data))
+
+
+def serialize(data: Dict) -> str:
+    """
+    The .json file content of scraped data. Everything that compares or writes the
+    data goes through here, so the same data always gives the same bytes.
+    """
+    return json.dumps(data, ensure_ascii=False)
 
 
 if __name__ == '__main__':
+    # python scrape.py --check-term <term>     exits with 0 if the term has courses
+    # python scrape.py <term> [<output file>]  writes the term's data (default data.min.json)
     if len(sys.argv) > 2 and sys.argv[1] == '--check-term':
         term = int(sys.argv[2])
         sys.exit(0 if SUcheduleCourseScraper(term=term).has_courses() else 1)
 
     term = int(sys.argv[1])
     scraper = SUcheduleCourseScraper(term=term)
-    scraper.run()
+    scraper.run(*sys.argv[2:3])

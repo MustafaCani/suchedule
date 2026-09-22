@@ -33,8 +33,16 @@
 <header>
     <div id="logo">SUchedule</div>
     <div id="about-button" class="icon-help button"></div>
-    <div id="clear-button" class="icon-trash button">Clear</div>
-    <div id="copy-button" class="icon-clipboard button">Copy Crn</div>
+    <div id="term-select">
+        <div id="term-button" class="icon-calendar button" title="Select Term">
+            <span id="term-label"></span><span class="term-caret icon-down-open-big"></span>
+        </div>
+        <div id="term-menu">
+            <div id="term-menu-title">Select Term</div>
+        </div>
+    </div>
+    <div id="clear-button" class="icon-trash button" title="Clear"><span class="button-text">Clear</span></div>
+    <div id="copy-button" class="icon-clipboard button" title="Copy Crn"><span class="button-text">Copy Crn</span></div>
 <!--    <div id="google-calendar-button" class="icon-google-calendar button">Add to Calendar</div> -->
 </header>
 <div id="menu">
@@ -166,6 +174,18 @@
     </table>
 </div>
 <div id="notifications">
+    <div id="notify-term-select" class="notification" style="display: none;">
+        <div class="notification-header">
+            <div class="notification-header-text">New: Select Your Term</div>
+            <div class="icon-cancel shake-on-hover button"></div>
+        </div>
+        <div class="notification-content">
+            <p>SUchedule now covers the last three terms and keeps a separate schedule for each of them.</p>
+            <p>Use the highlighted <b>Select Term</b> button at the top of the page to switch between terms. The
+                one you pick is remembered for your next visit.</p>
+        </div>
+        <div class="notification-button button">Got It</div>
+    </div>
     <div id="notify-about" class="notification" style="display: none;">
         <div class="notification-header">
             <div class="notification-header-text">About (?)</div>
@@ -260,6 +280,16 @@
         </div>
         <div class="notification-button button">Got It</div>
     </div>
+    <div id="notify-load-failed" class="notification" style="display: none;">
+        <div class="notification-header">
+            <div class="notification-header-text">Couldn't Load Courses</div>
+            <div class="icon-cancel shake-on-hover button"></div>
+        </div>
+        <div class="notification-content">
+            <p></p>
+        </div>
+        <div class="notification-button button">Ok</div>
+    </div>
 </div>
 <!--
 <div id="google-calendar-modal" class="modal">
@@ -299,6 +329,7 @@
 <script src="js/jquery-3.3.1.min.js"></script>
 <script src="js/jquery.modal.min.js"></script>
 <script src="js/clipboard.min.js"></script>
+<script src="js/terms.js"></script>
 <script src="js/suchedule.min.js"></script>
 <script src="https://apis.google.com/js/api.js"></script>
 <!-- <script src="js/google_calendar_integration.min.js"></script> -->
