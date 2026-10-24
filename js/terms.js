@@ -4,6 +4,6 @@
 // changes, so browsers never keep serving a stale copy.
 const termConfig = [
     {term: '202503', dataVersion: 111},
-    {term: '202601', dataVersion: 135},
-    {term: '202602', dataVersion: 134}
+    {term: '202601', dataVersion: 136},
+    {term: '202602', dataVersion: 136}
 ];
