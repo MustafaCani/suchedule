@@ -5,5 +5,5 @@
 const termConfig = [
     {term: '202503', dataVersion: 111},
     {term: '202601', dataVersion: 138},
-    {term: '202602', dataVersion: 137}
+    {term: '202602', dataVersion: 139}
 ];
